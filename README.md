@@ -35,8 +35,6 @@ can cost hundreds of millions of in-game dollars.
 
 ## Usage
 
-### Browser (recommended)
-
 Open the [PathFix page](https://reeseglidden.github.io/subway-builder-pathfix/),
 drop your save on it, review the report, download the fixed file, and put it in
 your saves folder:
@@ -47,24 +45,11 @@ your saves folder:
 | macOS | `~/Library/Application Support/SubwayBuilder/saves` *(standard Electron location — confirmations welcome)* |
 | Linux | `~/.config/SubwayBuilder/saves` *(likewise)* |
 
-### Command line
-
-Python 3.8+, no dependencies:
-
-```console
-$ python3 pathfix.py "%APPDATA%\SubwayBuilder\saves\dc_1_<id>.metro"
-Connected sections: 2 -> 1
-  island 1: 1 St, 10 St, 14 St, ...
-  island 2: Kenilworth Av
-  FIXED  0.173 m gap at (-76.951651, 38.896072) -> (-76.951653, 38.896072)  [1 track end(s) moved]
-  FIXED  0.173 m gap at (-76.951655, 38.896120) -> (-76.951653, 38.896120)  [1 track end(s) moved]
-Wrote dc_1_fixed_<newid>.metro
-```
-
-Options: `--threshold <meters>` (default 5.0), `--dry-run` (report only),
-`--aggressive` (also close sub-threshold gaps *within* an already-connected
-section — off by default because such gaps don't break pathfinding on their
-own), `--keep-identity`, `-o <path>`.
+The analysis shows your network on a map with every issue numbered, then a
+second step applies the fixes and downloads the repaired save. The default
+threshold closes gaps up to 5 m; the "aggressive" option also closes gaps
+inside already-connected sections (off by default because those don't break
+pathfinding on their own).
 
 ## Sanity guards
 
