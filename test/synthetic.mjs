@@ -134,22 +134,31 @@ const makeSave = (tracks, stations = [], stNodes = []) => ({
   console.log('ok  6: closes both gaps of a double-track break');
 }
 
-// --- 7. Map data: components ranked by size, largest is index 0 -----------
+// --- 7. Map data: red = dead-ends as bare track, not "smaller island" -----
 {
+  const platform = (id, a, b) => ({ ...track(id, a, b), type: 'station' });
   const save = makeSave([
-    track('big1', [-77.0, 38.9], [-77.001, 38.9]),
-    track('big2', [-77.001, 38.9], [-77.002, 38.9]),
-    track('small', [-77.01, 38.91], [-77.011, 38.91]), // separate island
+    // A valid standalone line: platform - track - platform. Disconnected from
+    // everything else, but healthy — must NOT be flagged.
+    platform('p1', [-77.0, 38.9], [-77.0005, 38.9]),
+    track('mid', [-77.0005, 38.9], [-77.001, 38.9]),
+    platform('p2', [-77.001, 38.9], [-77.0015, 38.9]),
+    // A severed stub elsewhere: one end joins nothing and isn't a platform.
+    track('stub-ok', [-77.01, 38.91], [-77.011, 38.91]),
+    track('stub-bad', [-77.011, 38.91], [-77.012, 38.91]), // far end dangles
+    platform('p3', [-77.0095, 38.91], [-77.01, 38.91]),
   ], [
-    { id: 's1', name: 'Alpha', trackIds: ['big1'], coords: [-77.0, 38.9] },
+    { id: 's1', name: 'Alpha', trackIds: ['p1'], coords: [-77.0, 38.9] },
   ]);
   const md = extractMapData(save);
-  assert.equal(md.components, 2);
-  assert.equal(md.tracks.length, 3);
-  assert.equal(md.tracks[0].component, 0, 'big island is component 0');
-  assert.equal(md.tracks[2].component, 1, 'small island is component 1');
+  const flags = Object.fromEntries(md.tracks.map((t, i) =>
+    [['p1', 'mid', 'p2', 'stub-ok', 'stub-bad', 'p3'][i], t.dangling]));
+  assert.deepEqual(flags, {
+    p1: false, mid: false, p2: false, // separate-but-valid line stays black
+    'stub-ok': false, 'stub-bad': true, p3: false, // only the bare end is red
+  });
   assert.deepEqual(md.stations, [{ name: 'Alpha', coord: [-77.0, 38.9] }]);
-  console.log('ok  7: map data tags tracks by component and lists stations');
+  console.log('ok  7: only track that dead-ends as bare track is flagged');
 }
 
 console.log('all tests passed');

@@ -120,8 +120,8 @@
     <div id="analysis" aria-live="polite"></div>
     <div id="map"></div>
     <div class="legend" id="legend">
-      <span><span class="swatch" style="background:#202020"></span>connected network</span>
-      <span><span class="swatch" style="background:hsl(0 84.2% 60.2%)"></span>disconnected island</span>
+      <span><span class="swatch" style="background:#202020"></span>track</span>
+      <span><span class="swatch" style="background:hsl(0 84.2% 60.2%)"></span>dead-ends as bare track</span>
       <span><span class="dot"></span>station</span>
       <span><span class="badge-num fixable" style="transform:none">1</span>&nbsp;repairable gap</span>
       <span><span class="badge-num skipped" style="transform:none">2</span>&nbsp;gap left alone</span>
@@ -308,7 +308,7 @@ function renderMap(md, issues) {
   for (const t of md.tracks) {
     const latlngs = t.coords.map(ll);
     L.polyline(latlngs, {
-      color: t.component === 0 ? track : red,
+      color: t.dangling ? red : track,
       weight: 3,
       opacity: 0.9,
     }).addTo(mapLayers);

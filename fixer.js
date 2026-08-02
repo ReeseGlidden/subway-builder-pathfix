@@ -238,24 +238,31 @@ export function analyzeAndFix(save, { thresholdMeters = 1.0, aggressive = false 
   };
 }
 
-// Geometry for map display: track polylines tagged with their connected-
-// component index (0 = largest by track count) plus station positions.
+// Geometry for map display. A track end is healthy if track continues through
+// it (two or more segment ends meet there) or it's the end of a station
+// platform track — a legitimate line terminal. Segments with an unhealthy
+// (bare, dangling) end are flagged so the map can paint them as suspect;
+// a valid network of several separate lines shows no flags at all.
 export function extractMapData(save) {
   const data = getGameData(save);
   const tracks = data.tracks.filter((t) => Array.isArray(t.coords) && t.coords.length >= 2);
-  const uf = buildUnionFind(tracks);
-  const counts = new Map();
+  const degree = new Map();
+  const stationEnd = new Set(); // endpoints belonging to a station platform track
   for (const t of tracks) {
-    const root = uf.find(coordKey(t.coords[0]));
-    counts.set(root, (counts.get(root) ?? 0) + 1);
+    for (const c of [t.coords[0], t.coords[t.coords.length - 1]]) {
+      const k = coordKey(c);
+      degree.set(k, (degree.get(k) ?? 0) + 1);
+      if (t.type === 'station') stationEnd.add(k);
+    }
   }
-  const order = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a));
-  const indexOf = new Map(order.map((root, i) => [root, i]));
+  const healthy = (c) => {
+    const k = coordKey(c);
+    return (degree.get(k) ?? 0) >= 2 || stationEnd.has(k);
+  };
   return {
-    components: order.length,
     tracks: tracks.map((t) => ({
       coords: t.coords.map((c) => [c[0], c[1]]),
-      component: indexOf.get(uf.find(coordKey(t.coords[0]))),
+      dangling: !healthy(t.coords[0]) || !healthy(t.coords[t.coords.length - 1]),
     })),
     stations: (data.stations || [])
       .filter((s) => Array.isArray(s.coords) && s.coords.length >= 2)
