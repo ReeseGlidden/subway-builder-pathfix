@@ -1,6 +1,6 @@
 // Self-contained tests using synthetic saves — run with: node test/synthetic.mjs
-import { parseSaveFile, analyzeAndFix, rebrand, suggestFilename, serializeSave }
-  from '../fixer.js';
+import { parseSaveFile, analyzeAndFix, extractMapData, rebrand, suggestFilename,
+         serializeSave } from '../fixer.js';
 import assert from 'node:assert/strict';
 
 const track = (id, a, b, elev = 0) => ({
@@ -132,6 +132,24 @@ const makeSave = (tracks, stations = [], stNodes = []) => ({
     'closing the first gap must not disqualify the parallel one');
   assert.equal(r.componentsAfter, 1);
   console.log('ok  6: closes both gaps of a double-track break');
+}
+
+// --- 7. Map data: components ranked by size, largest is index 0 -----------
+{
+  const save = makeSave([
+    track('big1', [-77.0, 38.9], [-77.001, 38.9]),
+    track('big2', [-77.001, 38.9], [-77.002, 38.9]),
+    track('small', [-77.01, 38.91], [-77.011, 38.91]), // separate island
+  ], [
+    { id: 's1', name: 'Alpha', trackIds: ['big1'], coords: [-77.0, 38.9] },
+  ]);
+  const md = extractMapData(save);
+  assert.equal(md.components, 2);
+  assert.equal(md.tracks.length, 3);
+  assert.equal(md.tracks[0].component, 0, 'big island is component 0');
+  assert.equal(md.tracks[2].component, 1, 'small island is component 1');
+  assert.deepEqual(md.stations, [{ name: 'Alpha', coord: [-77.0, 38.9] }]);
+  console.log('ok  7: map data tags tracks by component and lists stations');
 }
 
 console.log('all tests passed');

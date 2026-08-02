@@ -238,6 +238,31 @@ export function analyzeAndFix(save, { thresholdMeters = 1.0, aggressive = false 
   };
 }
 
+// Geometry for map display: track polylines tagged with their connected-
+// component index (0 = largest by track count) plus station positions.
+export function extractMapData(save) {
+  const data = getGameData(save);
+  const tracks = data.tracks.filter((t) => Array.isArray(t.coords) && t.coords.length >= 2);
+  const uf = buildUnionFind(tracks);
+  const counts = new Map();
+  for (const t of tracks) {
+    const root = uf.find(coordKey(t.coords[0]));
+    counts.set(root, (counts.get(root) ?? 0) + 1);
+  }
+  const order = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a));
+  const indexOf = new Map(order.map((root, i) => [root, i]));
+  return {
+    components: order.length,
+    tracks: tracks.map((t) => ({
+      coords: t.coords.map((c) => [c[0], c[1]]),
+      component: indexOf.get(uf.find(coordKey(t.coords[0]))),
+    })),
+    stations: (data.stations || [])
+      .filter((s) => Array.isArray(s.coords) && s.coords.length >= 2)
+      .map((s) => ({ name: s.name ?? '', coord: [s.coords[0], s.coords[1]] })),
+  };
+}
+
 // Gives the repaired save a new identity so it never collides with the original.
 export function rebrand(save, suffix = ' FIXED') {
   if (!save?.mainSave) return null;

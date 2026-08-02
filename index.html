@@ -5,9 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Subway Builder PathFix — repair "No Valid Path" saves</title>
 <meta name="description" content="Fixes the Subway Builder bug where invisibly misaligned track endpoints break route pathfinding. Runs entirely in your browser.">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <style>
   /* Palette lifted from the game's own light theme (shadcn-neutral tokens
-     from index.css) plus its UI blue and route-bullet styling. */
+     from its index.css) plus its UI blue and route-bullet styling. */
   :root {
     --background: hsl(0 0% 100%);
     --foreground: hsl(0 0% 3.9%);
@@ -18,6 +22,7 @@
     --primary: #0096ff;
     --destructive: hsl(0 84.2% 60.2%);
     --good: hsl(142 52% 32%);
+    --track: #202020;
     --radius: 0.5rem;
   }
   * { box-sizing: border-box; }
@@ -48,11 +53,29 @@
   .options input[type=number] { width: 5rem; background: var(--card);
              color: var(--foreground); border: 1px solid var(--border);
              border-radius: 6px; padding: .25rem .5rem; }
+  #map { display: none; height: 400px; margin-top: 1rem;
+         border: 1px solid var(--border); border-radius: var(--radius); }
+  .legend { display: none; flex-wrap: wrap; gap: 1rem; margin-top: .5rem;
+            font-size: .85rem; color: var(--muted-foreground); align-items: center; }
+  .legend .swatch { display: inline-block; width: 1.1rem; height: 4px;
+            border-radius: 2px; vertical-align: middle; margin-right: .35rem; }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+            background: #fff; border: 2px solid var(--track); vertical-align: middle;
+            margin-right: .35rem; }
   .fix { color: var(--good); }
   .warn { color: var(--destructive); }
   .muted { color: var(--muted-foreground); }
   ul { margin: .5rem 0; padding-left: 1.4rem; }
   li { margin: .25rem 0; }
+  ol.issues { list-style: none; margin: .5rem 0; padding: 0; }
+  ol.issues li { display: flex; gap: .55rem; align-items: baseline; margin: .4rem 0; }
+  .badge-num, .map-badge { display: inline-flex; align-items: center;
+       justify-content: center; width: 22px; height: 22px; border-radius: 50%;
+       color: #fff; font-weight: 700; font-size: .82rem; flex: none;
+       transform: translateY(3px); }
+  .badge-num.fixable, .map-badge.fixable { background: var(--primary); }
+  .badge-num.skipped, .map-badge.skipped { background: var(--destructive); }
+  .map-badge { transform: none; box-shadow: 0 0 0 2px #fff, 0 1px 3px rgb(0 0 0 / .4); }
   button.action { display: inline-block; margin-top: .75rem; padding: .65rem 1.4rem;
           font-size: 1rem; font-weight: 600; color: #fff; background: var(--primary);
           border: 0; border-radius: var(--radius); cursor: pointer; }
@@ -77,8 +100,8 @@
     <p class="step-title"><span class="bullet b1">1</span> Analyze your save</p>
     <div id="drop" tabindex="0" role="button" aria-label="Choose a save file">
       <strong>Drop your save here — or click to browse</strong>
-      <span>.metro save or Legacy JSON export &middot; nothing is uploaded;
-      everything runs in your browser</span>
+      <span>.metro save or Legacy JSON export &middot; your save data never leaves
+      your browser</span>
       <input type="file" id="file" accept=".metro,.json" hidden>
     </div>
     <div class="options">
@@ -89,6 +112,14 @@
         Also close gaps inside already-connected sections</label>
     </div>
     <div id="analysis" aria-live="polite"></div>
+    <div id="map"></div>
+    <div class="legend" id="legend">
+      <span><span class="swatch" style="background:#202020"></span>connected network</span>
+      <span><span class="swatch" style="background:hsl(0 84.2% 60.2%)"></span>disconnected island</span>
+      <span><span class="dot"></span>station</span>
+      <span><span class="badge-num fixable" style="transform:none">1</span>&nbsp;repairable gap</span>
+      <span><span class="badge-num skipped" style="transform:none">2</span>&nbsp;gap left alone</span>
+    </div>
   </div>
 
   <div class="panel step disabled" id="step2">
@@ -120,6 +151,9 @@
     are checked too, so it won't weld different depths together). Legitimate
     parallel tracks are ~5&nbsp;m apart and are never touched. The repaired save is
     re-packed with a fresh ID so it can't collide with the original.</p>
+    <p class="muted">Privacy: all analysis and fixing happens in your browser.
+    The only network requests are for the base map imagery (OpenStreetMap data
+    rendered by CARTO) — your save file itself is never uploaded anywhere.</p>
   </details>
 
   <footer>
@@ -131,15 +165,17 @@
 </main>
 
 <script type="module">
-import { parseSaveFile, analyzeAndFix, rebrand, suggestFilename, serializeSave }
-  from './fixer.js';
+import { parseSaveFile, analyzeAndFix, extractMapData, rebrand, suggestFilename,
+         serializeSave } from './fixer.js';
 
 const analysis = document.getElementById('analysis');
 const result = document.getElementById('result');
 const step2 = document.getElementById('step2');
 const fileInput = document.getElementById('file');
 const drop = document.getElementById('drop');
-let current = null; // { parsed, options, report }
+let current = null; // { parsed, opts, report, file }
+let map = null;
+let mapLayers = null;
 
 const fmt = (c) => `(${c[0].toFixed(6)}, ${c[1].toFixed(6)})`;
 const esc = (s) => String(s).replace(/[&<>"']/g,
@@ -167,15 +203,31 @@ async function analyze(file) {
     // Analysis runs on a throwaway copy; nothing is modified until step 2.
     const report = analyzeAndFix(structuredClone(parsed.save), opts);
     current = { parsed, opts, report, file };
-    renderAnalysis(report);
+    // Numbered issues shown in both the list and on the map: repairable gaps
+    // first, then notable skipped ones. Numbering is shared.
+    const issues = [
+      ...report.fixes.map((f) => ({
+        fixable: true, at: f.to, d: f.distanceMeters,
+        text: `${f.distanceMeters.toFixed(3)} m gap at ${fmt(f.from)} — repairable,
+               moves ${f.tracks.length} track end(s) to ${fmt(f.to)}`,
+      })),
+      ...report.skipped.filter((s) => s.reason !== 'already-connected').map((s) => ({
+        fixable: false, at: s.coords[0], d: s.distanceMeters, reason: s.reason,
+        text: `${s.distanceMeters.toFixed(3)} m gap at ${fmt(s.coords[0])} — left alone:
+               ${reasonText[s.reason] ?? s.reason}`,
+      })),
+    ];
+    renderAnalysis(report, issues);
+    renderMap(extractMapData(parsed.save), issues);
   } catch (err) {
     current = null;
+    hideMap();
     analysis.innerHTML = `<p class="warn">Couldn't read that file: ${esc(err.message)}</p>
       <p class="muted">Expected a Subway Builder .metro save or Legacy JSON export.</p>`;
   }
 }
 
-function renderAnalysis(r) {
+function renderAnalysis(r, issues) {
   const rows = [];
   rows.push(`<p>Your network has <strong>${r.componentsBefore}</strong> connected
     section${r.componentsBefore === 1 ? '' : 's'}.</p>`);
@@ -186,20 +238,16 @@ function renderAnalysis(r) {
     }
     rows.push('</ul>');
   }
-  if (r.fixes.length) {
-    rows.push(`<p class="fix"><strong>${r.fixes.length} repairable misalignment${r.fixes.length > 1 ? 's' : ''} found:</strong></p><ul>`);
-    for (const f of r.fixes) {
-      rows.push(`<li>a ${f.distanceMeters.toFixed(3)} m gap at ${fmt(f.from)}
-        &mdash; would move ${f.tracks.length} track end(s) to ${fmt(f.to)}</li>`);
-    }
-    rows.push('</ul>');
+  if (issues.length) {
+    rows.push('<p><strong>Issues found</strong> (numbers match the map):</p>');
+    rows.push('<ol class="issues">');
+    issues.forEach((issue, i) => {
+      rows.push(`<li><span class="badge-num ${issue.fixable ? 'fixable' : 'skipped'}">${i + 1}</span>
+        <span>${issue.text}</span></li>`);
+    });
+    rows.push('</ol>');
   }
-  const interesting = r.skipped.filter((s) => s.reason !== 'already-connected');
-  const boring = r.skipped.length - interesting.length;
-  for (const s of interesting) {
-    rows.push(`<p class="warn">Found but left alone: a ${s.distanceMeters.toFixed(3)} m gap
-      at ${fmt(s.coords[0])} &mdash; ${esc(reasonText[s.reason] ?? s.reason)}.</p>`);
-  }
+  const boring = r.skipped.filter((s) => s.reason === 'already-connected').length;
   if (boring) {
     rows.push(`<p class="muted">${boring} sub-threshold gap${boring > 1 ? 's' : ''} inside
       already-connected sections left alone (harmless for pathfinding).</p>`);
@@ -226,6 +274,61 @@ function renderAnalysis(r) {
       <button class="action" id="apply">Apply fixes &amp; download</button>`;
     document.getElementById('apply').addEventListener('click', applyFixes, { once: true });
   }
+}
+
+function renderMap(md, issues) {
+  const el = document.getElementById('map');
+  if (typeof L === 'undefined') return; // offline / Leaflet blocked: skip the map
+  el.style.display = 'block';
+  document.getElementById('legend').style.display = 'flex';
+  if (!map) {
+    map = L.map(el);
+    L.tileLayer('https://{s}.basemap.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 20,
+    }).addTo(map);
+    mapLayers = L.layerGroup().addTo(map);
+  }
+  mapLayers.clearLayers();
+  const ll = (c) => [c[1], c[0]]; // save stores [lon, lat]; Leaflet wants [lat, lng]
+  const bounds = [];
+  const track = getComputedStyle(document.documentElement).getPropertyValue('--track').trim() || '#202020';
+  const red = 'hsl(0 84.2% 60.2%)';
+  for (const t of md.tracks) {
+    const latlngs = t.coords.map(ll);
+    L.polyline(latlngs, {
+      color: t.component === 0 ? track : red,
+      weight: 3,
+      opacity: 0.9,
+    }).addTo(mapLayers);
+    bounds.push(latlngs[0], latlngs[latlngs.length - 1]);
+  }
+  for (const s of md.stations) {
+    L.circleMarker(ll(s.coord), {
+      radius: 5, color: track, weight: 2, fillColor: '#ffffff', fillOpacity: 1,
+    }).bindTooltip(esc(s.name)).addTo(mapLayers);
+  }
+  issues.forEach((issue, i) => {
+    L.marker(ll(issue.at), {
+      icon: L.divIcon({
+        className: '',
+        html: `<div class="map-badge ${issue.fixable ? 'fixable' : 'skipped'}">${i + 1}</div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      }),
+      zIndexOffset: 1000,
+    }).bindTooltip(`#${i + 1}: ${issue.d.toFixed(3)} m gap — ${issue.fixable ? 'will be fixed' : 'left alone'}`)
+      .addTo(mapLayers);
+    bounds.push(ll(issue.at));
+  });
+  map.invalidateSize();
+  if (bounds.length) map.fitBounds(bounds, { padding: [25, 25] });
+}
+
+function hideMap() {
+  document.getElementById('map').style.display = 'none';
+  document.getElementById('legend').style.display = 'none';
 }
 
 async function applyFixes() {
