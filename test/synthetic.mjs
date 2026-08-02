@@ -1,6 +1,6 @@
 // Self-contained tests using synthetic saves — run with: node test/synthetic.mjs
 import { parseSaveFile, analyzeAndFix, extractMapData, rebrand, suggestFilename,
-         serializeSave } from '../fixer.js';
+         serializeSave, gzip, crc32 } from '../fixer.js';
 import assert from 'node:assert/strict';
 
 const track = (id, a, b, elev = 0) => ({
@@ -83,13 +83,14 @@ const makeSave = (tracks, stations = [], stNodes = []) => ({
   header.set(new TextEncoder().encode('METR'), 0);
   view.setUint32(0x08, 0x1000, true); // header size
   view.setUint32(0x0c, 2, true); // format version
-  view.setUint32(0x10, 0x1002, true); // payload offset
-  view.setUint32(0x18, 0x1002, true);
+  view.setUint32(0x10, 0x1002, true); // thumbnail offset (none here)
+  view.setUint32(0x14, 0, true); // thumbnail length
+  view.setUint32(0x18, 0x1002, true); // payload offset
   header.set(new TextEncoder().encode('TEST'), 0x28);
   header.set(new TextEncoder().encode('[]'), 0x1000);
-  const { gzip } = await import('../fixer.js');
   const payload = await gzip(new TextEncoder().encode(JSON.stringify(save)));
   view.setUint32(0x1c, payload.length, true);
+  view.setUint32(0x390, crc32(payload), true);
   const file = new Uint8Array(header.length + payload.length);
   file.set(header, 0);
   file.set(payload, header.length);
@@ -107,8 +108,11 @@ const makeSave = (tracks, stations = [], stNodes = []) => ({
   const out = await serializeSave(parsed);
   const reparsed = await parseSaveFile(out);
   assert.equal(reparsed.save.mainSave.name, 'TEST FIXED');
-  assert.equal(new DataView(out.buffer).getUint32(0x1c, true), out.length - 0x1002,
+  const outView = new DataView(out.buffer);
+  assert.equal(outView.getUint32(0x1c, true), out.length - 0x1002,
     'header payload length matches file layout');
+  assert.equal(outView.getUint32(0x390, true), crc32(out.slice(0x1002)),
+    'header CRC32 matches the payload the game will verify');
   assert.equal(analyzeAndFix(reparsed.save).componentsBefore, 1,
     'repaired save parses back as a single component');
   console.log('ok  5: .metro container round-trips with a correct header');
@@ -180,6 +184,46 @@ const makeSave = (tracks, stations = [], stNodes = []) => ({
   const r2 = analyzeAndFix(collinear);
   assert.equal(r2.fixes.length, 1);
   console.log('ok  8: multi-meter gaps close only when the ends face each other');
+}
+
+// --- 9. Saves with an embedded thumbnail keep it through a repair ---------
+{
+  const save = makeSave([
+    track('t1', [-77.0, 38.9], [-77.001, 38.9]),
+    track('t2', [-77.001000002, 38.9], [-77.002, 38.9]),
+  ]);
+  const thumb = new Uint8Array(100).fill(0x42);
+  thumb.set([0x89, 0x50, 0x4e, 0x47], 0); // PNG magic
+  const payloadOffset = 0x1002 + thumb.length;
+  const header = new Uint8Array(payloadOffset);
+  const view = new DataView(header.buffer);
+  header.set(new TextEncoder().encode('METR'), 0);
+  view.setUint32(0x08, 0x1000, true);
+  view.setUint32(0x0c, 2, true);
+  view.setUint32(0x10, 0x1002, true); // thumbnail offset
+  view.setUint32(0x14, thumb.length, true); // thumbnail length
+  view.setUint32(0x18, payloadOffset, true); // payload offset
+  header.set(new TextEncoder().encode('TEST'), 0x28);
+  header.set(new TextEncoder().encode('[]'), 0x1000);
+  header.set(thumb, 0x1002);
+  const payload = await gzip(new TextEncoder().encode(JSON.stringify(save)));
+  view.setUint32(0x1c, payload.length, true);
+  view.setUint32(0x390, crc32(payload), true);
+  const file = new Uint8Array(header.length + payload.length);
+  file.set(header, 0);
+  file.set(payload, header.length);
+
+  const parsed = await parseSaveFile(file);
+  assert.equal(analyzeAndFix(parsed.save).fixes.length, 1);
+  const out = await serializeSave(parsed);
+  assert.deepEqual([...out.slice(0x1002, 0x1002 + thumb.length)], [...thumb],
+    'thumbnail bytes survive the rewrite');
+  const outView = new DataView(out.buffer);
+  assert.equal(outView.getUint32(0x390, true), crc32(out.slice(payloadOffset)),
+    'CRC covers the payload after the thumbnail');
+  const reparsed = await parseSaveFile(out);
+  assert.equal(analyzeAndFix(reparsed.save).componentsBefore, 1);
+  console.log('ok  9: embedded thumbnails survive and the CRC stays correct');
 }
 
 console.log('all tests passed');

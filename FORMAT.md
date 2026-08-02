@@ -12,23 +12,39 @@ offset    size   contents
 0x0004    4      0
 0x0008    4      u32 LE  header size (0x1000)
 0x000C    4      u32 LE  format version (2)
-0x0010    4      u32 LE  payload offset (0x1002)
-0x0014    4      0
-0x0018    4      u32 LE  payload offset again (0x1002)
-0x001C    4      u32 LE  gzip payload length  (= file size − payload offset)
+0x0010    4      u32 LE  thumbnail offset (0x1002)
+0x0014    4      u32 LE  thumbnail length (0 if the save has no thumbnail)
+0x0018    4      u32 LE  gzip payload offset (= thumbnail offset + length)
+0x001C    4      u32 LE  gzip payload length
 0x0020    8      u64 LE  save timestamp, Unix milliseconds
 0x0028    256    save name, UTF-8, zero-padded
 0x0128    ~      city code (e.g. "DC"), zero-padded
 0x0150    ~      gameSessionId (UUID string), zero-padded
 0x0188    ~      small metadata JSON: {"stations":N,"routes":N,"trains":N,
                  "money":F,"elapsedSeconds":N}, zero-padded
+0x038C    4      u32 LE  10 (constant; meaning unknown, maybe a field tag)
+0x0390    4      u32 LE  CRC32 of the gzip payload bytes  ← REQUIRED
+0x0394    4      u32 LE  1 (constant; maybe "checksum present")
 0x1000    2      literal "[]" (5B 5D)
-0x1002    …EOF   gzip stream of the full save JSON
+0x1002    …      optional PNG thumbnail (length given at 0x14)
+…         …EOF   gzip stream of the full save JSON (offset given at 0x18)
 ```
 
-There is **no header checksum**. The only integrity check is the CRC32 inside
-the gzip stream itself, so any standard gzip implementation produces a valid
-payload. The game zeroes the gzip MTIME field.
+**The header contains a mandatory checksum.** `verifySaveIntegrity` in the
+game recomputes CRC32 over the gzip payload bytes (`payload offset` through
+`payload offset + payload length`) and compares it to the u32 at **0x0390**;
+on mismatch the save is rejected with *"Checksum verification failed …
+Expected N, got M"* (surfaced in the UI as "file may be corrupted or in an
+unsupported format"). Any tool that rewrites the payload must update 0x390.
+Note the CRC is over the *compressed* bytes — the gzip stream's own internal
+CRC32 (over the uncompressed data) is separate and also has to be intact,
+which any standard gzip implementation guarantees. The game zeroes the gzip
+MTIME field.
+
+Saves written since mid-2026 builds embed a PNG thumbnail between the header
+and the payload; older saves have thumbnail length 0 and both offset fields
+equal (0x1002), which is why the payload offset is easily mistaken for a
+duplicated field.
 
 ## Save JSON essentials
 

@@ -27,8 +27,11 @@ from pathlib import Path
 
 NAME_OFFSET = 0x28  # save name, zero-padded, ends before city code at 0x128
 NAME_MAX = 255
+PAYLOAD_OFFSET = 0x18  # u32 LE: gzip payload offset (after optional thumbnail)
 LEN_OFFSET = 0x1C  # u32 LE: gzip payload byte length
 TS_OFFSET = 0x20  # u64 LE: save timestamp in ms
+CRC_OFFSET = 0x390  # u32 LE: CRC32 of the gzip payload — the game refuses to
+# load a save whose payload doesn't match this ("Checksum verification failed")
 MAX_ELEVATION_DELTA = 0.5
 # For gaps beyond this, the two track ends must roughly point at each other
 # (within 60 degrees) or the pair is refused: a sideways near-miss is parallel
@@ -41,10 +44,16 @@ ALIGNMENT_MIN_COS = 0.5
 def parse_save_file(data: bytes):
     if data[:4] == b"METR":
         version = struct.unpack_from("<I", data, 0x0C)[0]
-        payload_offset = struct.unpack_from("<I", data, 0x10)[0]
+        payload_offset = struct.unpack_from("<I", data, PAYLOAD_OFFSET)[0]
+        payload_length = struct.unpack_from("<I", data, LEN_OFFSET)[0]
         if not 0x30 <= payload_offset < len(data):
             raise ValueError(f"Corrupt .metro header: payload offset {payload_offset:#x}")
-        save = json.loads(zlib.decompress(data[payload_offset:], 31))
+        # Slice by the recorded length (falling back to EOF); the header copy up
+        # to the payload keeps any embedded PNG thumbnail intact.
+        end = (payload_offset + payload_length
+               if payload_length and payload_offset + payload_length <= len(data)
+               else len(data))
+        save = json.loads(zlib.decompress(data[payload_offset:end], 31))
         return {"kind": "metro", "header": bytearray(data[:payload_offset]),
                 "save": save, "version": version}
     return {"kind": "json", "header": None, "save": json.loads(data), "version": None}
@@ -276,6 +285,7 @@ def serialize_save(parsed):
     payload[4:8] = b"\x00\x00\x00\x00"  # zero gzip MTIME, matching the game
     header = bytearray(parsed["header"])
     struct.pack_into("<I", header, LEN_OFFSET, len(payload))
+    struct.pack_into("<I", header, CRC_OFFSET, zlib.crc32(bytes(payload)))
     struct.pack_into("<Q", header, TS_OFFSET, int(time.time() * 1000))
     name = (parsed["save"].get("mainSave") or {}).get("name")
     if isinstance(name, str):

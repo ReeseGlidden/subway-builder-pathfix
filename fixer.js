@@ -4,8 +4,11 @@
 
 const NAME_OFFSET = 0x28; // save name, zero-padded, ends before city code at 0x128
 const NAME_MAX = 255;
+const PAYLOAD_OFFSET = 0x18; // u32 LE: gzip payload offset (after optional thumbnail)
 const LEN_OFFSET = 0x1c; // u32 LE: gzip payload byte length
 const TS_OFFSET = 0x20; // u64 LE: save timestamp in ms
+const CRC_OFFSET = 0x390; // u32 LE: CRC32 of the gzip payload — the game refuses
+// to load a save whose payload doesn't match this ("Checksum verification failed")
 
 // Snapping two endpoints with a bigger elevation gap than this is refused —
 // they are probably different levels of the network, not a misalignment.
@@ -17,6 +20,22 @@ const MAX_ELEVATION_DELTA = 0.5;
 // (~0.1 m) for direction to mean anything.
 const ALIGNMENT_CHECK_MIN_M = 1.5;
 const ALIGNMENT_MIN_COS = 0.5;
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c;
+  }
+  return t;
+})();
+
+export function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
 
 export async function gunzip(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
@@ -34,11 +53,16 @@ export async function parseSaveFile(bytes) {
   if (text(bytes.slice(0, 4)) === 'METR') {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const version = view.getUint32(0x0c, true);
-    const payloadOffset = view.getUint32(0x10, true);
+    const payloadOffset = view.getUint32(PAYLOAD_OFFSET, true);
+    const payloadLength = view.getUint32(LEN_OFFSET, true);
     if (payloadOffset < 0x30 || payloadOffset >= bytes.length) {
       throw new Error(`Corrupt .metro header: payload offset 0x${payloadOffset.toString(16)}`);
     }
-    const save = JSON.parse(text(await gunzip(bytes.slice(payloadOffset))));
+    // Slice by the recorded length (falling back to EOF); the header copy up to
+    // the payload keeps any embedded PNG thumbnail intact.
+    const end = payloadLength && payloadOffset + payloadLength <= bytes.length
+      ? payloadOffset + payloadLength : bytes.length;
+    const save = JSON.parse(text(await gunzip(bytes.slice(payloadOffset, end))));
     return { kind: 'metro', header: bytes.slice(0, payloadOffset), save, version };
   }
   return { kind: 'json', header: null, save: JSON.parse(text(bytes)), version: null };
@@ -332,6 +356,7 @@ export async function serializeSave(parsed) {
   const header = parsed.header.slice();
   const view = new DataView(header.buffer);
   view.setUint32(LEN_OFFSET, payload.length, true);
+  view.setUint32(CRC_OFFSET, crc32(payload), true);
   view.setBigUint64(TS_OFFSET, BigInt(Date.now()), true);
   const name = parsed.save?.mainSave?.name;
   if (typeof name === 'string') {
