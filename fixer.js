@@ -11,6 +11,13 @@ const TS_OFFSET = 0x20; // u64 LE: save timestamp in ms
 // they are probably different levels of the network, not a misalignment.
 const MAX_ELEVATION_DELTA = 0.5;
 
+// For gaps beyond this, the two track ends must roughly point at each other
+// (within 60°) or the pair is refused: a sideways near-miss is parallel
+// tracks, not a broken joint. Below it, coordinates are rounded too coarsely
+// (~0.1 m) for direction to mean anything.
+const ALIGNMENT_CHECK_MIN_M = 1.5;
+const ALIGNMENT_MIN_COS = 0.5;
+
 export async function gunzip(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
@@ -44,11 +51,36 @@ export function getGameData(save) {
   throw new Error('Unrecognized save structure: no track data found');
 }
 
+function metersVector(from, to) {
+  const latRad = (((from[1] + to[1]) / 2) * Math.PI) / 180;
+  return [(to[0] - from[0]) * 111320 * Math.cos(latRad), (to[1] - from[1]) * 110540];
+}
+
 function metersBetween(a, b) {
-  const latRad = (((a[1] + b[1]) / 2) * Math.PI) / 180;
-  const dx = (a[0] - b[0]) * 111320 * Math.cos(latRad);
-  const dy = (a[1] - b[1]) * 110540;
-  return Math.hypot(dx, dy);
+  return Math.hypot(...metersVector(a, b));
+}
+
+function unit(v) {
+  const m = Math.hypot(v[0], v[1]);
+  return m ? [v[0] / m, v[1] / m] : null;
+}
+
+// Direction a track "exits" through this endpoint, from its last leg.
+function outwardDirection(ref) {
+  const cs = ref.track.coords;
+  return unit(ref.end === 'start'
+    ? metersVector(cs[1], cs[0])
+    : metersVector(cs[cs.length - 2], cs[cs.length - 1]));
+}
+
+function endsPointAtEachOther(ea, eb) {
+  const g = unit(metersVector(ea.coord, eb.coord));
+  if (!g) return true;
+  const facing = (e, dir) => e.refs.some((r) => {
+    const d = outwardDirection(r);
+    return !d || d[0] * dir[0] + d[1] * dir[1] >= ALIGNMENT_MIN_COS;
+  });
+  return facing(ea, g) && facing(eb, [-g[0], -g[1]]);
 }
 
 class UnionFind {
@@ -158,7 +190,7 @@ const elevOf = (ref) =>
 // Finds sub-threshold endpoint gaps and snaps them shut, in place.
 // By default only gaps that bridge two disconnected components are touched;
 // aggressive=true also snaps near-misses inside an already-connected component.
-export function analyzeAndFix(save, { thresholdMeters = 1.0, aggressive = false } = {}) {
+export function analyzeAndFix(save, { thresholdMeters = 5.0, aggressive = false } = {}) {
   const data = getGameData(save);
   const endpoints = buildEndpointIndex(data.tracks);
   // Eligibility uses the component structure BEFORE any fixes: a double-track
@@ -183,6 +215,10 @@ export function analyzeAndFix(save, { thresholdMeters = 1.0, aggressive = false 
     const tracksAtA = new Set(ea.refs.map((r) => r.track.id));
     if (eb.refs.some((r) => tracksAtA.has(r.track.id))) {
       skipped.push({ ...pair, reason: 'same-track' });
+      continue;
+    }
+    if (d > ALIGNMENT_CHECK_MIN_M && !endsPointAtEachOther(ea, eb)) {
+      skipped.push({ ...pair, reason: 'not-aligned' });
       continue;
     }
     let minElevDelta = Infinity;

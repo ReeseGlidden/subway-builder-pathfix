@@ -112,7 +112,7 @@
     </div>
     <div class="options">
       <label>Max gap to close (m)
-        <input type="number" id="threshold" value="1.0" min="0.01" max="4" step="0.1">
+        <input type="number" id="threshold" value="5.0" min="0.01" max="10" step="0.1">
       </label>
       <label><input type="checkbox" id="aggressive">
         Also close gaps inside already-connected sections</label>
@@ -191,12 +191,13 @@ const esc = (s) => String(s).replace(/[&<>"']/g,
 const reasonText = {
   'already-connected': 'these sections are already linked elsewhere, so this gap is not what breaks pathfinding (enable the checkbox above to close it anyway)',
   'elevation-mismatch': 'the two ends are at different depths — looks like a crossing, not a broken joint',
+  'not-aligned': 'the gap runs sideways to the track direction — looks like parallel tracks, not a broken joint',
   'same-track': 'both ends belong to the same track',
 };
 
 function options() {
   return {
-    thresholdMeters: parseFloat(document.getElementById('threshold').value) || 1.0,
+    thresholdMeters: parseFloat(document.getElementById('threshold').value) || 5.0,
     aggressive: document.getElementById('aggressive').checked,
   };
 }

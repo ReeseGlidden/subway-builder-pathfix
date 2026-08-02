@@ -30,6 +30,12 @@ NAME_MAX = 255
 LEN_OFFSET = 0x1C  # u32 LE: gzip payload byte length
 TS_OFFSET = 0x20  # u64 LE: save timestamp in ms
 MAX_ELEVATION_DELTA = 0.5
+# For gaps beyond this, the two track ends must roughly point at each other
+# (within 60 degrees) or the pair is refused: a sideways near-miss is parallel
+# tracks, not a broken joint. Below it, coordinates are rounded too coarsely
+# (~0.1 m) for direction to mean anything.
+ALIGNMENT_CHECK_MIN_M = 1.5
+ALIGNMENT_MIN_COS = 0.5
 
 
 def parse_save_file(data: bytes):
@@ -51,9 +57,41 @@ def get_game_data(save):
     raise ValueError("Unrecognized save structure: no track data found")
 
 
-def meters_between(a, b):
+def meters_vector(a, b):
     lat = math.radians((a[1] + b[1]) / 2)
-    return math.hypot((a[0] - b[0]) * 111320 * math.cos(lat), (a[1] - b[1]) * 110540)
+    return ((b[0] - a[0]) * 111320 * math.cos(lat), (b[1] - a[1]) * 110540)
+
+
+def meters_between(a, b):
+    return math.hypot(*meters_vector(a, b))
+
+
+def unit(v):
+    m = math.hypot(*v)
+    return (v[0] / m, v[1] / m) if m else None
+
+
+def outward_direction(ref):
+    """Direction a track 'exits' through this endpoint, from its last leg."""
+    track, end = ref
+    cs = track["coords"]
+    return unit(meters_vector(cs[1], cs[0]) if end == "start"
+                else meters_vector(cs[-2], cs[-1]))
+
+
+def ends_point_at_each_other(ea, eb):
+    g = unit(meters_vector(ea["coord"], eb["coord"]))
+    if g is None:
+        return True
+
+    def facing(e, direction):
+        for ref in e["refs"]:
+            d = outward_direction(ref)
+            if d is None or d[0] * direction[0] + d[1] * direction[1] >= ALIGNMENT_MIN_COS:
+                return True
+        return False
+
+    return facing(ea, g) and facing(eb, (-g[0], -g[1]))
 
 
 class UnionFind:
@@ -137,7 +175,7 @@ def elev_of(ref):
     return track.get("startElevation" if end == "start" else "endElevation")
 
 
-def analyze_and_fix(save, threshold=1.0, aggressive=False):
+def analyze_and_fix(save, threshold=5.0, aggressive=False):
     data = get_game_data(save)
     tracks = valid_tracks(data)
     endpoints = build_endpoint_index(tracks)
@@ -161,6 +199,9 @@ def analyze_and_fix(save, threshold=1.0, aggressive=False):
         tracks_at_a = {t["id"] for t, _ in ea["refs"]}
         if any(t["id"] in tracks_at_a for t, _ in eb["refs"]):
             skipped.append({**pair, "reason": "same-track"})
+            continue
+        if d > ALIGNMENT_CHECK_MIN_M and not ends_point_at_each_other(ea, eb):
+            skipped.append({**pair, "reason": "not-aligned"})
             continue
         min_delta = min(abs((elev_of(ra) or 0) - (elev_of(rb) or 0))
                         for ra in ea["refs"] for rb in eb["refs"])
@@ -252,8 +293,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("save", help="path to a .metro save or Legacy JSON export")
     ap.add_argument("-o", "--output", help="output path (default: alongside input)")
-    ap.add_argument("--threshold", type=float, default=1.0,
-                    help="max gap in meters to snap shut (default 1.0)")
+    ap.add_argument("--threshold", type=float, default=5.0,
+                    help="max gap in meters to snap shut (default 5.0)")
     ap.add_argument("--aggressive", action="store_true",
                     help="also snap near-misses within already-connected sections")
     ap.add_argument("--dry-run", action="store_true",

@@ -24,10 +24,10 @@ can cost hundreds of millions of in-game dollars.
 
 1. Unpacks your save (native `.metro` or "Legacy JSON" export) and builds the
    track connection graph.
-2. Finds endpoint pairs closer than a threshold (default **1 m**) that belong
+2. Finds endpoint pairs closer than a threshold (default **5 m**) that belong
    to *disconnected* sections of the network. Legitimate parallel double-track
-   is ~5 m apart and is never touched; endpoints at different elevations are
-   never welded together.
+   is never touched (see the guards below); endpoints at different elevations
+   are never welded together.
 3. Snaps each gap shut so the coordinates match exactly, then verifies the
    network is connected.
 4. Writes a **new** save named "… FIXED" with a fresh ID, so it shows up as a
@@ -61,15 +61,17 @@ Connected sections: 2 -> 1
 Wrote dc_1_fixed_<newid>.metro
 ```
 
-Options: `--threshold <meters>` (default 1.0), `--dry-run` (report only),
+Options: `--threshold <meters>` (default 5.0), `--dry-run` (report only),
 `--aggressive` (also close sub-threshold gaps *within* an already-connected
 section — off by default because such gaps don't break pathfinding on their
 own), `--keep-identity`, `-o <path>`.
 
 ## Sanity guards
 
-- Only gaps **≤ threshold** (default 1 m) are considered; parallel-track
-  spacing (~5 m) is far above it.
+- Only gaps **≤ threshold** (default 5 m) are considered.
+- For gaps over ~1.5 m the two track ends must roughly point at each other —
+  a near-miss that runs *sideways* to the track direction is parallel
+  double-track (~5 m spacing), not a broken joint, and is never welded.
 - By default a gap is only closed if it joins two disconnected components.
 - Endpoints with more than 0.5 m of elevation difference are skipped
   (reported, not modified) — a tunnel passing under a surface track is not a

@@ -161,4 +161,25 @@ const makeSave = (tracks, stations = [], stNodes = []) => ({
   console.log('ok  7: only track that dead-ends as bare track is flagged');
 }
 
+// --- 8. Big thresholds can't weld parallel tracks sideways ----------------
+{
+  // Two disconnected lines running parallel, 3 m apart: cross-component and
+  // under the 5 m default threshold, but the gap is perpendicular to travel.
+  const sideways = makeSave([
+    track('a', [-77.0, 38.9], [-77.001, 38.9]),
+    track('b', [-77.001, 38.900027], [-77.002, 38.900027]), // ~3 m north
+  ]);
+  const r1 = analyzeAndFix(sideways);
+  assert.equal(r1.fixes.length, 0);
+  assert.equal(r1.skipped[0].reason, 'not-aligned');
+  // Same distance along the direction of travel is a genuine break: fixed.
+  const collinear = makeSave([
+    track('a', [-77.0, 38.9], [-77.001, 38.9]),
+    track('b', [-77.0010346, 38.9], [-77.002, 38.9]), // ~3 m gap, in line
+  ]);
+  const r2 = analyzeAndFix(collinear);
+  assert.equal(r2.fixes.length, 1);
+  console.log('ok  8: multi-meter gaps close only when the ends face each other');
+}
+
 console.log('all tests passed');
