@@ -6,58 +6,75 @@
 <title>Subway Builder PathFix — repair "No Valid Path" saves</title>
 <meta name="description" content="Fixes the Subway Builder bug where invisibly misaligned track endpoints break route pathfinding. Runs entirely in your browser.">
 <style>
+  /* Palette lifted from the game's own light theme (shadcn-neutral tokens
+     from index.css) plus its UI blue and route-bullet styling. */
   :root {
-    --bg: #101418; --panel: #1a2027; --text: #e8edf2; --muted: #9aa7b2;
-    --accent: #ffd166; --good: #6fd08c; --bad: #ef7a85; --line: #2b333c;
-  }
-  @media (prefers-color-scheme: light) {
-    :root { --bg: #f4f6f8; --panel: #ffffff; --text: #1c242c; --muted: #5a6a77;
-            --accent: #b8860b; --good: #1e7a3e; --bad: #b3364a; --line: #dde3e9; }
+    --background: hsl(0 0% 100%);
+    --foreground: hsl(0 0% 3.9%);
+    --card: hsl(0 0% 100%);
+    --muted: hsl(0 0% 96.1%);
+    --muted-foreground: hsl(0 0% 45.1%);
+    --border: hsl(0 0% 89.8%);
+    --primary: #0096ff;
+    --destructive: hsl(0 84.2% 60.2%);
+    --good: hsl(142 52% 32%);
+    --radius: 0.5rem;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
+  body { margin: 0; background: var(--muted); color: var(--foreground);
          font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { max-width: 780px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
   h1 { font-size: 1.7rem; margin: 0 0 .25rem; }
-  h1 .badge { color: var(--accent); }
-  .sub { color: var(--muted); margin: 0 0 1.5rem; }
-  .panel { background: var(--panel); border: 1px solid var(--line);
-           border-radius: 12px; padding: 1.25rem; margin: 1rem 0; }
-  #drop { border: 2px dashed var(--line); border-radius: 12px; padding: 2.5rem 1rem;
-          text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
-  #drop.hover { border-color: var(--accent); background: rgba(255, 209, 102, .06); }
+  .sub { color: var(--muted-foreground); margin: 0 0 1.5rem; }
+  .panel { background: var(--card); border: 1px solid var(--border);
+           border-radius: var(--radius); padding: 1.25rem; margin: 1rem 0;
+           box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); }
+  .step-title { display: flex; align-items: center; gap: .6rem;
+                font-size: 1.15rem; font-weight: 600; margin: 0 0 .75rem; }
+  .bullet { display: inline-flex; align-items: center; justify-content: center;
+            width: 1.7rem; height: 1.7rem; border-radius: 50%; flex: none;
+            color: #fff; font-weight: 700; font-size: 1rem; }
+  .bullet.b1 { background: #0096ff; }   /* game UI blue */
+  .bullet.b2 { background: #00add0; }   /* game route-bullet cyan */
+  .step.disabled { opacity: .55; }
+  #drop { border: 2px dashed var(--border); border-radius: var(--radius);
+          padding: 2.5rem 1rem; text-align: center; cursor: pointer;
+          background: var(--muted); transition: border-color .15s, background .15s; }
+  #drop.hover, #drop:hover { border-color: var(--primary); background: #0096ff10; }
   #drop strong { display: block; font-size: 1.1rem; }
-  #drop span { color: var(--muted); font-size: .9rem; }
+  #drop span { color: var(--muted-foreground); font-size: .9rem; }
   .options { display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: center;
-             margin-top: 1rem; font-size: .95rem; color: var(--muted); }
-  .options input[type=number] { width: 5rem; background: var(--bg); color: var(--text);
-             border: 1px solid var(--line); border-radius: 6px; padding: .25rem .5rem; }
-  #report { display: none; }
-  #report h2 { font-size: 1.15rem; margin: 0 0 .75rem; }
+             margin-top: 1rem; font-size: .95rem; color: var(--muted-foreground); }
+  .options input[type=number] { width: 5rem; background: var(--card);
+             color: var(--foreground); border: 1px solid var(--border);
+             border-radius: 6px; padding: .25rem .5rem; }
   .fix { color: var(--good); }
-  .warn { color: var(--bad); }
-  .muted { color: var(--muted); }
+  .warn { color: var(--destructive); }
+  .muted { color: var(--muted-foreground); }
   ul { margin: .5rem 0; padding-left: 1.4rem; }
   li { margin: .25rem 0; }
-  button.download { display: inline-block; margin-top: 1rem; padding: .65rem 1.4rem;
-          font-size: 1rem; font-weight: 600; color: #14181c; background: var(--accent);
-          border: 0; border-radius: 8px; cursor: pointer; }
+  button.action { display: inline-block; margin-top: .75rem; padding: .65rem 1.4rem;
+          font-size: 1rem; font-weight: 600; color: #fff; background: var(--primary);
+          border: 0; border-radius: var(--radius); cursor: pointer; }
+  button.action:hover { filter: brightness(1.08); }
+  button.action:disabled { background: var(--muted-foreground); cursor: default; }
   details { margin: 1rem 0; }
-  summary { cursor: pointer; color: var(--muted); }
-  code { background: rgba(128,128,128,.15); border-radius: 4px; padding: .1rem .35rem;
-         font-size: .88em; }
-  footer { color: var(--muted); font-size: .85rem; margin-top: 2.5rem; }
-  a { color: var(--accent); }
+  summary { cursor: pointer; color: var(--muted-foreground); }
+  code { background: var(--muted); border: 1px solid var(--border);
+         border-radius: 4px; padding: .1rem .35rem; font-size: .88em; }
+  footer { color: var(--muted-foreground); font-size: .85rem; margin-top: 2.5rem; }
+  a { color: var(--primary); }
 </style>
 </head>
 <body>
 <main>
-  <h1><span class="badge">PathFix</span> for Subway Builder</h1>
+  <h1>PathFix for Subway Builder</h1>
   <p class="sub">Repairs saves where routes fail with <em>"No valid path found between
   station tracks"</em> because track ends are misaligned by a few centimeters —
   invisible in game, fatal to the pathfinder.</p>
 
-  <div class="panel">
+  <div class="panel step" id="step1">
+    <p class="step-title"><span class="bullet b1">1</span> Analyze your save</p>
     <div id="drop" tabindex="0" role="button" aria-label="Choose a save file">
       <strong>Drop your save here — or click to browse</strong>
       <span>.metro save or Legacy JSON export &middot; nothing is uploaded;
@@ -71,9 +88,14 @@
       <label><input type="checkbox" id="aggressive">
         Also close gaps inside already-connected sections</label>
     </div>
+    <div id="analysis" aria-live="polite"></div>
   </div>
 
-  <div class="panel" id="report" aria-live="polite"></div>
+  <div class="panel step disabled" id="step2">
+    <p class="step-title"><span class="bullet b2">2</span> Fix and download</p>
+    <div id="result" class="muted">Analyze a save first — nothing is changed
+    until you apply the fixes.</div>
+  </div>
 
   <details>
     <summary>Where are my save files?</summary>
@@ -101,7 +123,7 @@
   </details>
 
   <footer>
-    Open source (MIT) — <a id="repolink" href="https://github.com/ReeseGlidden/subway-builder-pathfix">GitHub</a>.
+    Open source (MIT) — <a href="https://github.com/ReeseGlidden/subway-builder-pathfix">GitHub</a>.
     Command-line version (<code>pathfix.py</code>, Python 3, no dependencies) in the repo.
     Not affiliated with Subway Builder. Related bug report:
     <a href="https://github.com/colindm/SubwayBuilderIssues/issues/704">SubwayBuilderIssues #704</a>.
@@ -112,90 +134,122 @@
 import { parseSaveFile, analyzeAndFix, rebrand, suggestFilename, serializeSave }
   from './fixer.js';
 
-const drop = document.getElementById('drop');
+const analysis = document.getElementById('analysis');
+const result = document.getElementById('result');
+const step2 = document.getElementById('step2');
 const fileInput = document.getElementById('file');
-const report = document.getElementById('report');
-let lastFile = null;
+const drop = document.getElementById('drop');
+let current = null; // { parsed, options, report }
 
 const fmt = (c) => `(${c[0].toFixed(6)}, ${c[1].toFixed(6)})`;
 const esc = (s) => String(s).replace(/[&<>"']/g,
   (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const reasonText = {
+  'already-connected': 'these sections are already linked elsewhere, so this gap is not what breaks pathfinding (enable the checkbox above to close it anyway)',
+  'elevation-mismatch': 'the two ends are at different depths — looks like a crossing, not a broken joint',
+  'same-track': 'both ends belong to the same track',
+};
 
-async function run(file) {
-  lastFile = file;
-  report.style.display = 'block';
-  report.innerHTML = '<h2>Working&hellip;</h2>';
+function options() {
+  return {
+    thresholdMeters: parseFloat(document.getElementById('threshold').value) || 1.0,
+    aggressive: document.getElementById('aggressive').checked,
+  };
+}
+
+async function analyze(file) {
+  analysis.innerHTML = '<p class="muted">Analyzing&hellip;</p>';
+  resetStep2();
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const parsed = await parseSaveFile(bytes);
-    const result = analyzeAndFix(parsed.save, {
-      thresholdMeters: parseFloat(document.getElementById('threshold').value) || 1.0,
-      aggressive: document.getElementById('aggressive').checked,
-    });
-    render(parsed, result);
+    const opts = options();
+    // Analysis runs on a throwaway copy; nothing is modified until step 2.
+    const report = analyzeAndFix(structuredClone(parsed.save), opts);
+    current = { parsed, opts, report, file };
+    renderAnalysis(report);
   } catch (err) {
-    report.innerHTML = `<h2 class="warn">Couldn't process that file</h2>
-      <p class="muted">${esc(err.message)}</p>
+    current = null;
+    analysis.innerHTML = `<p class="warn">Couldn't read that file: ${esc(err.message)}</p>
       <p class="muted">Expected a Subway Builder .metro save or Legacy JSON export.</p>`;
   }
 }
 
-function render(parsed, r) {
+function renderAnalysis(r) {
   const rows = [];
-  rows.push(`<h2>${r.fixes.length ? `Fixed ${r.fixes.length} broken connection${r.fixes.length > 1 ? 's' : ''}`
-    : r.componentsAfter === 1 ? 'Network is fully connected — nothing to fix'
-    : 'No fixable gaps found'}</h2>`);
-  rows.push(`<p>Connected sections: <strong>${r.componentsBefore} &rarr; ${r.componentsAfter}</strong></p>`);
-
+  rows.push(`<p>Your network has <strong>${r.componentsBefore}</strong> connected
+    section${r.componentsBefore === 1 ? '' : 's'}.</p>`);
   if (r.componentsBefore > 1) {
-    rows.push('<p class="muted">Islands detected before fixing:</p><ul>');
-    for (const names of r.islandsBefore) {
-      rows.push(`<li class="muted">${names.length ? esc(names.join(', ')) : '(no stations)'}</li>`);
-    }
-    rows.push('</ul>');
-  }
-  if (r.fixes.length) {
     rows.push('<ul>');
-    for (const f of r.fixes) {
-      rows.push(`<li class="fix">Closed a ${f.distanceMeters.toFixed(3)} m gap at
-        ${fmt(f.from)} &rarr; ${fmt(f.to)} (${f.tracks.length} track end(s) moved)</li>`);
+    for (const names of r.islandsBefore) {
+      rows.push(`<li class="muted">${names.length ? esc(names.join(', ')) : '(section with no stations)'}</li>`);
     }
     rows.push('</ul>');
   }
-  for (const s of r.skipped) {
-    if (s.reason !== 'already-connected') {
-      rows.push(`<p class="warn">Skipped a ${s.distanceMeters.toFixed(3)} m gap at
-        ${fmt(s.coords[0])}: ${esc(s.reason)}</p>`);
-    }
-  }
-  if (r.componentsAfter > 1 && r.fixes.length) {
-    rows.push(`<p class="warn">Some sections are still disconnected — the remaining
-      gaps are larger than the threshold, or those parts genuinely aren't linked yet.</p>`);
-  } else if (r.componentsAfter > 1 && !r.fixes.length) {
-    rows.push(`<p class="warn">Your network has disconnected sections, but no endpoint
-      pairs under the threshold were found. Try raising the threshold slightly — or the
-      sections may simply not be linked by track yet.</p>`);
-  }
   if (r.fixes.length) {
-    rows.push('<button class="download" id="dl">Download fixed save</button>');
+    rows.push(`<p class="fix"><strong>${r.fixes.length} repairable misalignment${r.fixes.length > 1 ? 's' : ''} found:</strong></p><ul>`);
+    for (const f of r.fixes) {
+      rows.push(`<li>a ${f.distanceMeters.toFixed(3)} m gap at ${fmt(f.from)}
+        &mdash; would move ${f.tracks.length} track end(s) to ${fmt(f.to)}</li>`);
+    }
+    rows.push('</ul>');
   }
-  report.innerHTML = rows.join('\n');
+  const interesting = r.skipped.filter((s) => s.reason !== 'already-connected');
+  const boring = r.skipped.length - interesting.length;
+  for (const s of interesting) {
+    rows.push(`<p class="warn">Found but left alone: a ${s.distanceMeters.toFixed(3)} m gap
+      at ${fmt(s.coords[0])} &mdash; ${esc(reasonText[s.reason] ?? s.reason)}.</p>`);
+  }
+  if (boring) {
+    rows.push(`<p class="muted">${boring} sub-threshold gap${boring > 1 ? 's' : ''} inside
+      already-connected sections left alone (harmless for pathfinding).</p>`);
+  }
+  if (!r.fixes.length) {
+    rows.push(r.componentsBefore === 1
+      ? '<p class="fix">Everything is connected — this save doesn\'t have the misalignment bug.</p>'
+      : `<p class="warn">Disconnected sections exist, but no endpoint pairs under the
+         threshold were found. Try a slightly larger threshold — or those sections
+         genuinely aren't linked by track yet.</p>`);
+  } else {
+    rows.push(r.componentsAfter === 1
+      ? '<p>Applying these fixes makes the network fully connected.</p>'
+      : `<p class="warn">Applying these fixes still leaves ${r.componentsAfter} sections —
+         the rest are farther apart than the threshold.</p>`);
+  }
+  analysis.innerHTML = rows.join('\n');
 
-  const dl = document.getElementById('dl');
-  if (dl) {
-    dl.addEventListener('click', async () => {
-      rebrand(parsed.save);
-      const blob = new Blob([await serializeSave(parsed)],
-        { type: 'application/octet-stream' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = suggestFilename(parsed);
-      a.click();
-      URL.revokeObjectURL(a.href);
-      dl.textContent = `Saved as ${a.download} — drop it into your saves folder`;
-      dl.disabled = true;
-    }, { once: true });
+  if (r.fixes.length) {
+    step2.classList.remove('disabled');
+    result.innerHTML = `<p class="muted">Ready to close ${r.fixes.length}
+      gap${r.fixes.length > 1 ? 's' : ''}. Your original file stays untouched;
+      you'll download a new save named "&hellip; FIXED".</p>
+      <button class="action" id="apply">Apply fixes &amp; download</button>`;
+    document.getElementById('apply').addEventListener('click', applyFixes, { once: true });
   }
+}
+
+async function applyFixes() {
+  const { parsed, opts } = current;
+  const r = analyzeAndFix(parsed.save, opts); // now for real
+  rebrand(parsed.save);
+  const blob = new Blob([await serializeSave(parsed)], { type: 'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = suggestFilename(parsed);
+  a.click();
+  URL.revokeObjectURL(a.href);
+  result.innerHTML = `<p class="fix">Closed ${r.fixes.length}
+    gap${r.fixes.length > 1 ? 's' : ''}; network now has ${r.componentsAfter}
+    connected section${r.componentsAfter === 1 ? '' : 's'}.</p>
+    <p>Saved as <code>${esc(a.download)}</code> — move it into your saves folder
+    (see below) and load "${esc(parsed.save?.mainSave?.name ?? 'the fixed save')}"
+    from the game's load menu.</p>`;
+}
+
+function resetStep2() {
+  step2.classList.add('disabled');
+  result.innerHTML = 'Analyze a save first — nothing is changed until you apply the fixes.';
+  result.className = 'muted';
 }
 
 drop.addEventListener('click', () => fileInput.click());
@@ -203,7 +257,7 @@ drop.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') fileInput.click();
 });
 fileInput.addEventListener('change', () => {
-  if (fileInput.files[0]) run(fileInput.files[0]);
+  if (fileInput.files[0]) analyze(fileInput.files[0]);
 });
 for (const ev of ['dragover', 'dragenter']) {
   drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('hover'); });
@@ -212,11 +266,11 @@ for (const ev of ['dragleave', 'drop']) {
   drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('hover'); });
 }
 drop.addEventListener('drop', (e) => {
-  if (e.dataTransfer.files[0]) run(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files[0]) analyze(e.dataTransfer.files[0]);
 });
 for (const id of ['threshold', 'aggressive']) {
   document.getElementById(id).addEventListener('change', () => {
-    if (lastFile) run(lastFile);
+    if (current?.file) analyze(current.file);
   });
 }
 </script>
