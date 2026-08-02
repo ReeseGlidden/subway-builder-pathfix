@@ -75,7 +75,14 @@
        transform: translateY(3px); }
   .badge-num.fixable, .map-badge.fixable { background: var(--primary); }
   .badge-num.skipped, .map-badge.skipped { background: var(--destructive); }
-  .map-badge { transform: none; box-shadow: 0 0 0 2px #fff, 0 1px 3px rgb(0 0 0 / .4); }
+  /* Map badges are anchored to a 0x0 divIcon and self-center so combined
+     badges (variable width) stay centered on the gap. */
+  .map-badge { transform: translate(-50%, -50%); cursor: pointer;
+               box-shadow: 0 0 0 2px #fff, 0 1px 3px rgb(0 0 0 / .4); }
+  .map-badge.multi { width: auto; min-width: 22px; padding: 0 7px;
+               border-radius: 11px; white-space: nowrap; }
+  .map-badge.mixed { background: linear-gradient(105deg, var(--primary) 50%,
+               var(--destructive) 50%); }
   button.action { display: inline-block; margin-top: .75rem; padding: .65rem 1.4rem;
           font-size: 1rem; font-weight: 600; color: #fff; background: var(--primary);
           border: 0; border-radius: var(--radius); cursor: pointer; }
@@ -93,8 +100,7 @@
 <main>
   <h1>PathFix for Subway Builder</h1>
   <p class="sub">Repairs saves where routes fail with <em>"No valid path found between
-  station tracks"</em> because track ends are misaligned by a few centimeters —
-  invisible in game, fatal to the pathfinder.</p>
+  station tracks"</em> because track ends are misaligned by a few centimeters.</p>
 
   <div class="panel step" id="step1">
     <p class="step-title"><span class="bullet b1">1</span> Analyze your save</p>
@@ -176,6 +182,8 @@ const drop = document.getElementById('drop');
 let current = null; // { parsed, opts, report, file }
 let map = null;
 let mapLayers = null;
+let issueLayer = null;
+let currentIssues = [];
 
 const fmt = (c) => `(${c[0].toFixed(6)}, ${c[1].toFixed(6)})`;
 const esc = (s) => String(s).replace(/[&<>"']/g,
@@ -283,12 +291,14 @@ function renderMap(md, issues) {
   document.getElementById('legend').style.display = 'flex';
   if (!map) {
     map = L.map(el);
-    L.tileLayer('https://{s}.basemap.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       subdomains: 'abcd',
       maxZoom: 20,
     }).addTo(map);
     mapLayers = L.layerGroup().addTo(map);
+    issueLayer = L.layerGroup().addTo(map);
+    map.on('zoomend', drawIssueMarkers); // markers merge/split as overlap changes
   }
   mapLayers.clearLayers();
   const ll = (c) => [c[1], c[0]]; // save stores [lon, lat]; Leaflet wants [lat, lng]
@@ -309,24 +319,62 @@ function renderMap(md, issues) {
       radius: 5, color: track, weight: 2, fillColor: '#ffffff', fillOpacity: 1,
     }).bindTooltip(esc(s.name)).addTo(mapLayers);
   }
-  issues.forEach((issue, i) => {
-    L.marker(ll(issue.at), {
-      icon: L.divIcon({
-        className: '',
-        html: `<div class="map-badge ${issue.fixable ? 'fixable' : 'skipped'}">${i + 1}</div>`,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
-      }),
-      zIndexOffset: 1000,
-    }).bindTooltip(`#${i + 1}: ${issue.d.toFixed(3)} m gap — ${issue.fixable ? 'will be fixed' : 'left alone'}`)
-      .addTo(mapLayers);
-    bounds.push(ll(issue.at));
-  });
+  for (const issue of issues) bounds.push(ll(issue.at));
+  currentIssues = issues;
   map.invalidateSize();
   if (bounds.length) map.fitBounds(bounds, { padding: [25, 25] });
+  drawIssueMarkers();
+}
+
+// Issue badges collide when gaps sit meters apart on a city-wide view, so
+// markers closer than ~26 px merge into one combined badge ("1·2") that
+// zooms in when clicked; zooming past the overlap splits them again.
+function drawIssueMarkers() {
+  if (!map || !issueLayer) return;
+  issueLayer.clearLayers();
+  if (!currentIssues.length) return;
+  const ll = (c) => [c[1], c[0]];
+  const pts = currentIssues.map((issue, i) => ({
+    i, issue, p: map.latLngToContainerPoint(ll(issue.at)),
+  }));
+  const clusters = [];
+  for (const pt of pts) {
+    const near = clusters.find((cl) => cl.pts.some((q) => q.p.distanceTo(pt.p) < 26));
+    if (near) near.pts.push(pt);
+    else clusters.push({ pts: [pt] });
+  }
+  for (const cl of clusters) {
+    const nums = cl.pts.map((q) => q.i + 1);
+    const allFix = cl.pts.every((q) => q.issue.fixable);
+    const allSkip = cl.pts.every((q) => !q.issue.fixable);
+    const cls = allFix ? 'fixable' : allSkip ? 'skipped' : 'mixed';
+    const latlngs = cl.pts.map((q) => ll(q.issue.at));
+    const center = [
+      latlngs.reduce((s, p) => s + p[0], 0) / latlngs.length,
+      latlngs.reduce((s, p) => s + p[1], 0) / latlngs.length,
+    ];
+    const tooltip = cl.pts.map((q) =>
+      `#${q.i + 1}: ${q.issue.d.toFixed(3)} m gap — ${q.issue.fixable ? 'will be fixed' : 'left alone'}`
+    ).join('<br>') + (nums.length > 1 ? '<br><em>click to zoom in</em>' : '');
+    const marker = L.marker(center, {
+      icon: L.divIcon({
+        className: '',
+        html: `<div class="map-badge ${cls}${nums.length > 1 ? ' multi' : ''}">${nums.join('·')}</div>`,
+        iconSize: [0, 0],
+        iconAnchor: [0, 0],
+      }),
+      zIndexOffset: 1000,
+    }).bindTooltip(tooltip);
+    marker.on('click', () => {
+      if (nums.length > 1) map.fitBounds(latlngs, { padding: [60, 60], maxZoom: 19 });
+      else map.setView(center, Math.max(map.getZoom(), 17));
+    });
+    marker.addTo(issueLayer);
+  }
 }
 
 function hideMap() {
+  currentIssues = [];
   document.getElementById('map').style.display = 'none';
   document.getElementById('legend').style.display = 'none';
 }
